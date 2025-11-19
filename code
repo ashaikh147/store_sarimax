@@ -1,0 +1,235 @@
+import pandas as pd
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+# ======================================================
+# 1. LOAD AND PREPARE DATA
+# ======================================================
+
+df['DT'] = pd.to_datetime(df['DT'])
+df = df.sort_values(['BRANCH NAME', 'DT'])
+
+TARGET = "Sold QTY"
+FORECAST_DAYS = 30
+SEASONALITY = 7
+
+store_list = df['BRANCH NAME'].unique()
+forecast_result = {}
+
+# ======================================================
+# 2. LOOP THROUGH EACH STORE (NO FUNCTION)
+# ======================================================
+
+for store in store_list:
+
+    print(f"\nRunning SARIMAX for store → {store}")
+
+    # ---------------------------
+    # FILTER DATA FOR THIS STORE
+    # ---------------------------
+    temp = df[df['BRANCH NAME'] == store].copy()
+
+    # set index as date
+    temp = temp.set_index("DT")
+
+    # ensure daily frequency
+    temp = temp.asfreq("D")
+
+    # fill missing days with 0 sales
+    temp[TARGET] = temp[TARGET].fillna(0)
+
+    # ---------------------------
+    # SARIMAX MODEL PARAMETERS
+    # ---------------------------
+    order = (1, 1, 1)
+    seasonal_order = (1, 1, 1, SEASONALITY)
+
+    # ---------------------------
+    # FIT MODEL
+    # ---------------------------
+    model = SARIMAX(
+        temp[TARGET],
+        order=order,
+        seasonal_order=seasonal_order,
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+
+    model_fit = model.fit(disp=False)
+
+    # ---------------------------
+    # FORECAST
+    # ---------------------------
+    fc = model_fit.get_forecast(steps=FORECAST_DAYS)
+
+    mean_pred = fc.predicted_mean
+    conf_int = fc.conf_int()
+
+    # ---------------------------
+    # CREATE FORECAST DF
+    # ---------------------------
+    fc_df = pd.DataFrame({
+        "DATE": mean_pred.index,
+        "FORECAST": mean_pred.values,
+        "LOWER_CI": conf_int.iloc[:, 0].values,
+        "UPPER_CI": conf_int.iloc[:, 1].values,
+        "BRANCH NAME": store
+    })
+
+    # save
+    forecast_result[store] = fc_df
+
+# ======================================================
+# 3. COMBINE ALL STORE FORECASTS
+# ======================================================
+
+final_fc = pd.concat(forecast_result.values(), ignore_index=True)
+
+print("\n🎉 Forecast Completed for ALL Stores")
+print(final_fc.head())
+========================================= end ====================================
+#FULL CODE – SARIMAX + PLOTS + ACCURACY (NO FUNCTIONS)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
+
+# ======================================================
+# 1. PREPARE DATA
+# ======================================================
+
+df['DT'] = pd.to_datetime(df['DT'])
+df = df.sort_values(['BRANCH NAME', 'DT'])
+
+TARGET = "Sold QTY"
+FORECAST_DAYS = 30
+SEASONALITY = 7
+
+store_list = df['BRANCH NAME'].unique()
+
+forecast_result = []
+accuracy_result = []
+
+# ======================================================
+# 2. LOOP OVER EACH STORE
+# ======================================================
+
+for store in store_list:
+
+    print(f"\n============================")
+    print(f"Running SARIMAX for Store → {store}")
+    print(f"============================")
+
+    # Filter for this store
+    temp = df[df['BRANCH NAME'] == store].copy()
+    temp = temp.set_index("DT")
+    temp = temp.asfreq("D")
+    temp[TARGET] = temp[TARGET].fillna(0)
+
+    # -------------------------------
+    # Define SARIMAX configuration
+    # -------------------------------
+    order = (1, 1, 1)
+    seasonal_order = (1, 1, 1, SEASONALITY)
+
+    print("Fitting model...")
+
+    model = SARIMAX(
+        temp[TARGET],
+        order=order,
+        seasonal_order=seasonal_order,
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+
+    model_fit = model.fit(disp=False)
+
+    # -------------------------------
+    # TRAIN ACCURACY (LAST 30 DAYS)
+    # -------------------------------
+
+    if len(temp) > 60:  
+        train = temp.iloc[:-30][TARGET]
+        test = temp.iloc[-30:][TARGET]
+
+        model_val = SARIMAX(
+            train,
+            order=order,
+            seasonal_order=seasonal_order,
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        ).fit(disp=False)
+
+        pred = model_val.get_forecast(steps=30).predicted_mean.values
+
+        rmse = np.sqrt(mean_squared_error(test, pred))
+        mape = mean_absolute_percentage_error(test, pred)
+
+    else:
+        rmse, mape = None, None
+
+    accuracy_result.append([store, rmse, mape])
+
+    # -------------------------------
+    # FORECAST FOR FUTURE 30 DAYS
+    # -------------------------------
+
+    fc = model_fit.get_forecast(steps=FORECAST_DAYS)
+    mean_pred = fc.predicted_mean
+    conf_int = fc.conf_int()
+
+    fc_df = pd.DataFrame({
+        "BRANCH NAME": store,
+        "DATE": mean_pred.index,
+        "FORECAST": mean_pred.values,
+        "LOWER_CI": conf_int.iloc[:, 0].values,
+        "UPPER_CI": conf_int.iloc[:, 1].values
+    })
+
+    forecast_result.append(fc_df)
+
+    # -------------------------------
+    # PLOT FORECAST
+    # -------------------------------
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(temp.index, temp[TARGET], label="Actual Sales", linewidth=2)
+    plt.plot(mean_pred.index, mean_pred, label="Forecast", linestyle="--", linewidth=2)
+
+    plt.fill_between(
+        mean_pred.index,
+        conf_int.iloc[:, 0],
+        conf_int.iloc[:, 1],
+        color="gray",
+        alpha=0.3,
+        label="Confidence Interval"
+    )
+
+    plt.title(f"Store {store} - 30 Day SARIMAX Forecast")
+    plt.xlabel("Date")
+    plt.ylabel("Sales Qty")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# ======================================================
+# 3. COMBINE RESULTS
+# ======================================================
+
+final_fc = pd.concat(forecast_result, ignore_index=True)
+
+acc_df = pd.DataFrame(accuracy_result, columns=["STORE", "RMSE", "MAPE"])
+
+print("\n🎉 Forecast Completed for ALL Stores!")
+print("\n📌 Forecast Output Sample:")
+print(final_fc.head())
+
+print("\n📌 Accuracy Table:")
+print(acc_df)
+
+
+
+
+
+
+
