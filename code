@@ -128,3 +128,159 @@ print("📁 Excel File Saved At:", output_path)
 ### Preview first few rows
 print("\nSample Output:")
 print(final_fc.head())
+
+####### END FIRST CODE HERE###################
+###==========================================
+### SECOND CODE WITH ERROR MATRICS
+
+### ======================================================
+### IMPORT LIBRARIES
+### ======================================================
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+### ======================================================
+### 1. LOAD & PREPARE DATA
+### ======================================================
+
+file_path = '/content/QATAR_STORE_DATA_18.11.2025.xlsx'
+df = pd.read_excel(file_path)
+
+# Rename for consistency
+df = df.rename(columns={
+    'DT': 'DATE',
+    'Sold QTY': 'Sold_Qty',
+    'BRANCH NAME': 'BRANCH_NAME'
+})
+
+df['DATE'] = pd.to_datetime(df['DATE'])
+df = df.sort_values(['BRANCH_NAME','DATE'])
+
+### ======================================================
+### 2. PARAMETERS
+### ======================================================
+
+TARGET = 'Sold_Qty'
+FORECAST_DAYS = 30
+SEASONALITY = 7
+FORECAST_RESULT = {}
+ERROR_RESULT = {}      # <--- NEW: store error metrics
+
+STORE_LIST = df['BRANCH_NAME'].unique()
+
+### ======================================================
+### 3. LOOP THROUGH EACH STORE
+### ======================================================
+
+for store in STORE_LIST:
+
+    print(f"\n==============================")
+    print(f"Running Forecast For Store → {store}")
+    print(f"==============================")
+
+    # ---------------------------
+    # Filter store data
+    # ---------------------------
+    temp = df[df['BRANCH_NAME'] == store].copy()
+    temp = temp.set_index('DATE')
+    temp = temp.asfreq('D')
+    temp[TARGET] = temp[TARGET].fillna(0)
+
+    # ---------------------------
+    # TRAIN / TEST SPLIT
+    # ---------------------------
+    train = temp.iloc[:-FORECAST_DAYS]
+    test  = temp.iloc[-FORECAST_DAYS:]
+
+    # ---------------------------
+    # SARIMAX Model
+    # ---------------------------
+    order = (1,1,1)
+    seasonal_order = (1,1,1,SEASONALITY)
+
+    model = SARIMAX(
+        train[TARGET],
+        order=order,
+        seasonal_order=seasonal_order,
+        enforce_invertibility=False,
+        enforce_stationarity=False
+    )
+
+    model_fit = model.fit(disp=False)
+
+    # ---------------------------
+    # PREDICT on TEST DATA (for error)
+    # ---------------------------
+    fc_test = model_fit.get_forecast(steps=FORECAST_DAYS)
+    test_pred = fc_test.predicted_mean
+
+    # ---------------------------
+    # ERROR METRICS
+    # ---------------------------
+    mae  = mean_absolute_error(test[TARGET], test_pred)
+    rmse = np.sqrt(mean_squared_error(test[TARGET], test_pred))
+    mape = np.mean(np.abs((test[TARGET] - test_pred) / (test[TARGET] + 1e-6))) * 100
+
+    ERROR_RESULT[store] = {
+        "MAE": mae,
+        "RMSE": rmse,
+        "MAPE": mape
+    }
+
+    print(f"📉 Errors → MAE={mae:.2f}, RMSE={rmse:.2f}, MAPE={mape:.2f}%")
+
+    # ---------------------------
+    # FULL MODEL (train + test) FOR REAL FORECAST
+    # ---------------------------
+    full_model = SARIMAX(
+        temp[TARGET],
+        order=order,
+        seasonal_order=seasonal_order,
+        enforce_invertibility=False,
+        enforce_stationarity=False
+    )
+
+    final_fit = full_model.fit(disp=False)
+
+    fc = final_fit.get_forecast(steps=FORECAST_DAYS)
+    mean_pred = fc.predicted_mean
+    conf_int = fc.conf_int()
+
+    # ---------------------------
+    # FORECAST OUTPUT DF
+    # ---------------------------
+    fc_DF = pd.DataFrame({
+        'DATE': mean_pred.index,
+        'FORECAST': mean_pred.values,
+        'LOWER_CI': conf_int.iloc[:, 0].values,
+        'UPPER_CI': conf_int.iloc[:, 1].values,
+        'BRANCH_NAME': store
+    })
+
+    FORECAST_RESULT[store] = fc_DF
+
+### ======================================================
+### 4. COMBINE FORECASTS + ERRORS
+### ======================================================
+
+final_fc = pd.concat(FORECAST_RESULT.values(), ignore_index=True)
+error_df = pd.DataFrame(ERROR_RESULT).T   # convert dict → table
+
+### ======================================================
+### 5. SAVE TO EXCEL
+### ======================================================
+
+final_fc.to_excel("/content/final_forecast.xlsx", index=False)
+error_df.to_excel("/content/forecast_errors.xlsx")
+
+print("\n🎉 Forecast Completed Successfully!")
+print("📁 Forecast File: /content/final_forecast.xlsx")
+print("📁 Errors File:   /content/forecast_errors.xlsx")
+
+print("\nSample Forecast Output:")
+print(final_fc.head())
+
+print("\nSample Error Output:")
+print(error_df.head())
