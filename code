@@ -1,50 +1,77 @@
+### ======================================================
 ### IMPORT LIBRARIES
+### ======================================================
 import pandas as pd
 import numpy as np
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-#### LOAD DATA
+### ======================================================
+### 1. LOAD & PREPARE DATA
+### ======================================================
+
+# Load Excel File
 file_path = '/content/QATAR_STORE_DATA_18.11.2025.xlsx'
 df = pd.read_excel(file_path)
+
+# Rename columns to consistent Python-friendly names
 df = df.rename(columns={
     'DT': 'DATE',
     'Sold QTY': 'Sold_Qty',
     'BRANCH NAME': 'BRANCH_NAME'
 })
+
+# Convert DATE column to datetime
 df['DATE'] = pd.to_datetime(df['DATE'])
+
+# Sort data by store and date (important for forecasting)
 df = df.sort_values(['BRANCH_NAME', 'DATE'])
 
-### FORECAST WORKING PARAMETERS
-TARGET = 'Sold_Qty'
-FORECAST_DAYS = 30
-SEASONALITY = 7
-FORECAST_RESULT = {}
+### ======================================================
+### 2. FORECAST PARAMETERS
+### ======================================================
 
-# STORE LIST
+TARGET = 'Sold_Qty'       # Column we want to forecast
+FORECAST_DAYS = 30        # Number of days to predict
+SEASONALITY = 7           # Weekly seasonality
+FORECAST_RESULT = {}      # Dictionary to store forecasts per store
+
+# Get unique store list
 STORE_LIST = df['BRANCH_NAME'].unique()
 
-# FORECAST OF STORE BY LOOP
+### ======================================================
+### 3. LOOP THROUGH EACH STORE AND RUN FORECAST
+### ======================================================
+
 for store in STORE_LIST:
 
-    print(f"FORECAST OF --->>> {store}")
+    print(f"\n==============================")
+    print(f"Running Forecast For Store → {store}")
+    print(f"==============================")
 
-    # Filter data
+    # ------------------------------------------------------
+    # FILTER DATA FOR THIS STORE
+    # ------------------------------------------------------
     temp = df[df['BRANCH_NAME'] == store].copy()
 
-    # Set Date as Index
+    # Set DATE as index (SARIMAX requires date index)
     temp = temp.set_index('DATE')
 
-    # Daily Frequency 
+    # Convert to daily frequency
+    # Missing days will appear as NaN
     temp = temp.asfreq('D')
 
-    # Fill missing values
+    # Replace missing sales with 0
     temp[TARGET] = temp[TARGET].fillna(0)
 
-    # SARIMAX parameters
-    order = (1, 1, 1)
-    seasonal_order = (1, 1, 1, SEASONALITY)
+    # ------------------------------------------------------
+    # SARIMAX MODEL PARAMETERS
+    # ------------------------------------------------------
+    order = (1, 1, 1)                     # ARIMA part (p, d, q)
+    seasonal_order = (1, 1, 1, SEASONALITY)  # Seasonal part (P, D, Q, s)
 
-    # FIT MODEL
+    # ------------------------------------------------------
+    # FIT SARIMAX MODEL
+    # ------------------------------------------------------
     model = SARIMAX(
         temp[TARGET],
         order=order,
@@ -55,33 +82,49 @@ for store in STORE_LIST:
 
     model_fit = model.fit(disp=False)
 
-    # -------------------------------------------
-    # FORECAST (THIS MUST BE INSIDE THE LOOP)
-    # -------------------------------------------
+    # ------------------------------------------------------
+    # FORECAST NEXT N DAYS
+    # ------------------------------------------------------
     fc = model_fit.get_forecast(steps=FORECAST_DAYS)
+
+    # Forecasted values
     mean_pred = fc.predicted_mean
+
+    # Lower & upper confidence interval
     conf_int = fc.conf_int()
 
-    # Create DF for Forecast
+    # ------------------------------------------------------
+    # CREATE FORECAST DATAFRAME
+    # ------------------------------------------------------
     fc_DF = pd.DataFrame({
         'DATE': mean_pred.index,
         'FORECAST': mean_pred.values,
-        'LOWER_CI': conf_int.iloc[:, 0],
-        'UPPER_CI': conf_int.iloc[:, 1],
+        'LOWER_CI': conf_int.iloc[:, 0].values,
+        'UPPER_CI': conf_int.iloc[:, 1].values,
         'BRANCH_NAME': store
     })
 
-    # Save in dictionary
+    # ------------------------------------------------------
+    # STORE FORECAST IN DICTIONARY
+    # ------------------------------------------------------
     FORECAST_RESULT[store] = fc_DF
 
+### ======================================================
+### 4. COMBINE ALL STORE FORECASTS INTO ONE DATAFRAME
+### ======================================================
 
-# ===========================================
-# COMBINE ALL STORE FORECASTS
-# ===========================================
 final_fc = pd.concat(FORECAST_RESULT.values(), ignore_index=True)
 
-# SAVE TO EXCEL
+### ======================================================
+### 5. SAVE FORECAST TO EXCEL
+### ======================================================
+
 output_path = "/content/final_forecast.xlsx"
 final_fc.to_excel(output_path, index=False)
 
-print("📁 Excel file saved at:", output_path)
+print("\n🎉 Forecast Completed Successfully!")
+print("📁 Excel File Saved At:", output_path)
+
+### Preview first few rows
+print("\nSample Output:")
+print(final_fc.head())
