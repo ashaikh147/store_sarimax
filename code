@@ -284,3 +284,35 @@ print(final_fc.head())
 
 print("\nSample Error Output:")
 print(error_df.head())
+
+#####============================= PLOT==================
+
+import matplotlib.pyplot as plt
+
+# Pick any store to plot
+store = STORE_LIST[0]
+
+# Actual data for store
+temp = df[df['BRANCH_NAME'] == store].copy()
+temp = temp.set_index('DATE').asfreq('D')
+temp[TARGET] = temp[TARGET].fillna(0)
+
+# Forecast result
+fc_df = FORECAST_RESULT[store].set_index('DATE')
+
+plt.figure(figsize=(12, 5))
+
+# Actual curve
+plt.plot(temp.index, temp[TARGET], label="Actual", linewidth=2)
+
+# Forecast curve
+plt.plot(fc_df.index, fc_df['FORECAST'], label="Forecast", linewidth=2, linestyle='--')
+
+plt.title(f"Simple Curve Graph — {store}")
+plt.xlabel("Date")
+plt.ylabel("Sold Qty")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
